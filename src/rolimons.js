@@ -27,6 +27,19 @@ async function startVerification(robloxUsername) {
   const context = await browser.newContext();
   const page = await context.newPage();
 
+  // TEMP DEBUG — capture every XHR/fetch response so we can see whether
+  // the live-search API call behind the result card succeeds, fails, or
+  // gets blocked/rate-limited when run from Railway's IP.
+  const xhrLog = [];
+  page.on('response', (res) => {
+    try {
+      const req = res.request();
+      if (['xhr', 'fetch'].includes(req.resourceType())) {
+        xhrLog.push(`${res.status()} ${req.method()} ${res.url()}`);
+      }
+    } catch {}
+  });
+
   await page.goto('https://www.rolimons.com/verify', { waitUntil: 'domcontentloaded' });
 
   // Confirmed via DevTools: the verify page's own search box has
@@ -59,13 +72,11 @@ async function startVerification(robloxUsername) {
     // TEMP DEBUG — remove once we've diagnosed why the result card
     // isn't showing up on Railway. Dumps page state straight into the
     // Railway Deploy Logs so we don't need to transfer a screenshot.
-    console.error('DEBUG startVerification — page url:', page.url());
-    console.error(
-      'DEBUG startVerification — page title:',
-      await page.title().catch(() => '(failed to read title)')
-    );
-    const html = await page.content().catch(() => '(failed to read content)');
-    console.error('DEBUG startVerification — page content (first 3000 chars):', html.slice(0, 3000));
+    const typedValue = await verifyInput.inputValue().catch(() => '(could not read)');
+    console.error('DEBUG startVerification — value left in search box:', typedValue);
+    console.error('DEBUG startVerification — XHR/fetch calls seen:', JSON.stringify(xhrLog, null, 2));
+    const bodyHtml = await page.evaluate(() => document.body.innerHTML).catch(() => '(failed to read body)');
+    console.error('DEBUG startVerification — body content (first 3000 chars):', bodyHtml.slice(0, 3000));
 
     await browser.close().catch(() => {}); // avoid leaking a zombie browser on failure
     throw err;
