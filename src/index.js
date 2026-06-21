@@ -277,7 +277,7 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.commandName === 'logout') {
     const fs = require('fs');
     const path = require('path');
-    const sessionPath = path.join(__dirname, '..', 'sessions', `${discordId}.json`);
+    const sessionPath = path.join(__dirname, '..', 'storage', 'sessions', `${discordId}.json`);
     if (fs.existsSync(sessionPath)) fs.unlinkSync(sessionPath);
     store.deleteUser(discordId);
 
