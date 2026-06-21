@@ -53,7 +53,23 @@ async function startVerification(robloxUsername) {
   // (div[data-ref="player"] with an onclick handler) — we need to
   // actually click it, pressing Enter alone does not select a result.
   const resultCard = page.locator('div[data-ref="player"]').first();
-  await resultCard.waitFor({ state: 'visible', timeout: 15000 });
+  try {
+    await resultCard.waitFor({ state: 'visible', timeout: 15000 });
+  } catch (err) {
+    // TEMP DEBUG — remove once we've diagnosed why the result card
+    // isn't showing up on Railway. Dumps page state straight into the
+    // Railway Deploy Logs so we don't need to transfer a screenshot.
+    console.error('DEBUG startVerification — page url:', page.url());
+    console.error(
+      'DEBUG startVerification — page title:',
+      await page.title().catch(() => '(failed to read title)')
+    );
+    const html = await page.content().catch(() => '(failed to read content)');
+    console.error('DEBUG startVerification — page content (first 3000 chars):', html.slice(0, 3000));
+
+    await browser.close().catch(() => {}); // avoid leaking a zombie browser on failure
+    throw err;
+  }
   await resultCard.click();
 
   // Give the page a moment to load the verification phrase section
