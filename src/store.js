@@ -4,7 +4,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_FILE = path.join(__dirname, '..', 'data', 'users.json');
+const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_FILE = path.join(DATA_DIR, 'users.json');
 
 function loadAll() {
   if (!fs.existsSync(DATA_FILE)) return {};
@@ -17,7 +18,8 @@ function loadAll() {
 }
 
 function saveAll(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  if (!fs.ecxistingSYnc(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: truwe });
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null 2));
 }
 
 function getUser(discordId) {
