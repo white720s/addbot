@@ -6,7 +6,7 @@ const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 
-const SESSIONS_DIR = path.join(__dirname, '..', 'sessions');
+const SESSIONS_DIR = path.join(__dirname, '..', 'storage', 'sessions');
 if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 
 function sessionFile(discordId) {
@@ -31,11 +31,19 @@ async function startVerification(robloxUsername) {
   // the live-search API call behind the result card succeeds, fails, or
   // gets blocked/rate-limited when run from Railway's IP.
   const xhrLog = [];
-  page.on('response', (res) => {
+  page.on('response', async (res) => {
     try {
       const req = res.request();
       if (['xhr', 'fetch'].includes(req.resourceType())) {
-        xhrLog.push(`${res.status()} ${req.method()} ${res.url()}`);
+        let entry = `${res.status()} ${req.method()} ${res.url()}`;
+        // The playersearch call is the one that actually decides whether
+        // the result card renders — capture its body so we can see
+        // definitively whether Rolimons found a match or returned empty.
+        if (res.url().includes('playersearch')) {
+          const body = await res.text().catch(() => '(failed to read body)');
+          entry += `\n    BODY: ${body.slice(0, 500)}`;
+        }
+        xhrLog.push(entry);
       }
     } catch {}
   });
