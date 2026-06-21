@@ -4,6 +4,9 @@ const store = require('./store');
 const rolimons = require('./rolimons');
 const rolimonsApi = require('./rolimons-api');
 const { TRADE_TAGS } = require('./constants');
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejecitopn (bot stayed alive):', err);
+});
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 
