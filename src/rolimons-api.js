@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const SESSIONS_DIR = path.join(__dirname, '..', 'storage', 'sessions');
+const SESSIONS_DIR = path.join(__dirname, '..', 'sessions');
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -229,6 +229,35 @@ async function postTradeAd(discordId, adConfig, playerId) {
   return { ok: true };
 }
 
+// ---------- Trade ad feed ----------
+// Rolimons officially documents this endpoint for bot use:
+// "Bot developers please use our API rather than scraping"
+// Returns all trade ads posted in the past 3 minutes.
+// Response shape confirmed from their documentation.
+async function getRecentTradeAds() {
+  const res = await fetch('https://api.rolimons.com/tradeads/v1/getrecentads', {
+    headers: HEADERS,
+  });
+  if (!res.ok) throw new Error(`getRecentTradeAds failed: ${res.status}`);
+  const data = await res.json();
+  return data;
+}
+
+// Returns a Roblox avatar thumbnail URL for a given user ID.
+// Used for embed thumbnails in snipe notifications.
+async function getPlayerThumbnail(userId) {
+  try {
+    const res = await fetch(
+      `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=150x150&format=Png`,
+      { headers: { 'User-Agent': HEADERS['User-Agent'] } }
+    );
+    const data = await res.json();
+    return data?.data?.[0]?.imageUrl || null;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   getItemCatalog,
   searchItemCatalog,
@@ -236,4 +265,7 @@ module.exports = {
   getPlayerIdByUsername,
   postTradeAd,
   getSessionCookieHeader,
+  getRecentTradeAds,
+  getPlayerThumbnail,
+  MANUAL_ITEM_NAMES,
 };
