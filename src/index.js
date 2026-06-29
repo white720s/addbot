@@ -686,6 +686,23 @@ client.on('interactionCreate', async (interaction) => {
         name: channelName,
         parent: category.id,
         topic: `Snipe alerts for ${user.robloxUsername} — ${item.name}`,
+        permissionOverwrites: [
+          {
+            // Deny everyone by default
+            id: interaction.guild.roles.everyone.id,
+            deny: ['ViewChannel'],
+          },
+          {
+            // Allow the user who ran the command
+            id: discordId,
+            allow: ['ViewChannel', 'ReadMessageHistory'],
+          },
+          {
+            // Allow the bot itself
+            id: interaction.client.user.id,
+            allow: ['ViewChannel', 'SendMessages', 'EmbedLinks', 'ReadMessageHistory'],
+          },
+        ],
       });
     }
 
@@ -721,18 +738,85 @@ client.on('interactionCreate', async (interaction) => {
   // ---------- /stopsnipe ----------
   if (interaction.commandName === 'stopsnipe') {
     const itemId = interaction.options.getString('item');
+    const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+
+    const handleStop = async (snipeItemId, itemName) => {
+      snipeEngine.stopSnipe(discordId, snipeItemId);
+
+      // Find the snipe channel
+      const safeUsername = (store.getUser(discordId)?.robloxUsername || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const safeItem = (itemName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const channelName = `snipe-${safeUsername}-${safeItem}`;
+      const snipeChannel = interaction.guild.channels.cache.find(c => c.name === channelName);
+
+      // Show delete prompt with Yes/No buttons
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`delete_snipe_channel_${snipeItemId}`)
+          .setLabel('Yes, delete the channel')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId(`keep_snipe_channel_${snipeItemId}`)
+          .setLabel('No, keep it')
+          .setStyle(ButtonStyle.Secondary),
+      );
+
+      const reply = await interaction.reply({
+        content: `✅ Stopped sniping **${itemName}**. Do you want to delete the channel${snipeChannel ? ` (${snipeChannel})` : ''}? It will be auto-deleted in 30 minutes if you don't choose.`,
+        components: [row],
+        ephemeral: true,
+      });
+
+      // Auto-delete after 30 minutes if no response
+      const autoDeleteTimeout = setTimeout(async () => {
+        if (snipeChannel) {
+          await snipeChannel.delete().catch(() => {});
+        }
+      }, 30 * 60 * 1000);
+
+      // Listen for button click
+      try {
+        const collector = reply.createMessageComponentCollector({ time: 30 * 60 * 1000 });
+        collector.on('collect', async (btn) => {
+          clearTimeout(autoDeleteTimeout);
+          if (btn.customId === `delete_snipe_channel_${snipeItemId}`) {
+            if (snipeChannel) await snipeChannel.delete().catch(() => {});
+            await btn.update({ content: '✅ Channel deleted.', components: [] });
+          } else {
+            await btn.update({ content: '✅ Channel kept.', components: [] });
+          }
+          collector.stop();
+        });
+        collector.on('end', async (_, reason) => {
+          if (reason === 'time' && snipeChannel) {
+            await snipeChannel.delete().catch(() => {});
+          }
+        });
+      } catch (err) {
+        console.error('stopsnipe collector error:', err.message);
+      }
+    };
 
     if (!itemId) {
-      // Stop all snipes for this user
+      // Stop all snipes
+      const active = snipeEngine.getActiveSnipes(discordId);
       snipeEngine.stopAllSnipesForUser(discordId);
-      return interaction.reply({ content: '✅ Stopped all your active snipes.', ephemeral: true });
+      if (active.length === 0) {
+        return interaction.reply({ content: 'You have no active snipes running.', ephemeral: true });
+      }
+      // Handle each one
+      for (const s of active) {
+        await handleStop(s.itemId, s.itemName);
+      }
+      return;
     }
 
-    const stopped = snipeEngine.stopSnipe(discordId, itemId);
-    return interaction.reply({
-      content: stopped ? '✅ Stopped that snipe.' : '❌ No active snipe found for that item.',
-      ephemeral: true,
-    });
+    const active = snipeEngine.getActiveSnipes(discordId);
+    const snipe = active.find(s => String(s.itemId) === String(itemId));
+    if (!snipe) {
+      return interaction.reply({ content: '❌ No active snipe found for that item.', ephemeral: true });
+    }
+    return handleStop(snipe.itemId, snipe.itemName);
   }
 
   // ---------- /snipeoptions ----------
