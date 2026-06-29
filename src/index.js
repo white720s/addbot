@@ -4,9 +4,9 @@ const store = require('./store');
 const rolimons = require('./rolimons');
 const rolimonsApi = require('./rolimons-api');
 const { TRADE_TAGS } = require('./constants');
-process.on('unhandledRejection', (err) => {
-  console.error('Unhandled rejection (bot stayed alive):', err);
-});
+const snipeEngine = require('./snipe');
+
+const SNIPE_CATEGORY_NAME = 'ad viewer'; // the category you created manually
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 
@@ -173,6 +173,45 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
+// Autocomplete for /snipe and /stopsnipe item options
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isAutocomplete()) return;
+  if (interaction.commandName !== 'snipe' && interaction.commandName !== 'stopsnipe') return;
+
+  const discordId = interaction.user.id;
+  const focused = interaction.options.getFocused();
+
+  try {
+    if (interaction.commandName === 'snipe') {
+      const user = store.getUser(discordId);
+      if (!user) return interaction.respond([{ name: 'Log in first with /startlogin', value: '' }]);
+
+      const inventory = await rolimonsApi.getPlayerInventory(user.robloxUsername);
+      const matches = inventory
+        .filter(item => item.name.toLowerCase().includes(focused.toLowerCase()))
+        .slice(0, 25);
+
+      return interaction.respond(
+        matches.map(item => ({
+          name: `${item.name} (${item.acronym || '—'})`,
+          value: item.id,
+        }))
+      );
+    }
+
+    if (interaction.commandName === 'stopsnipe') {
+      const active = snipeEngine.getActiveSnipes(discordId);
+      if (active.length === 0) return interaction.respond([{ name: 'No active snipes', value: '' }]);
+      return interaction.respond(
+        active.map(s => ({ name: `${s.itemName} (${s.acronym})`, value: s.itemId }))
+      );
+    }
+  } catch (err) {
+    console.error('snipe autocomplete error:', err);
+    return interaction.respond([]).catch(() => {});
+  }
+});
+
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -277,7 +316,7 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.commandName === 'logout') {
     const fs = require('fs');
     const path = require('path');
-    const sessionPath = path.join(__dirname, '..', 'storage', 'sessions', `${discordId}.json`);
+    const sessionPath = path.join(__dirname, '..', 'sessions', `${discordId}.json`);
     if (fs.existsSync(sessionPath)) fs.unlinkSync(sessionPath);
     store.deleteUser(discordId);
 
@@ -598,6 +637,126 @@ client.on('interactionCreate', async (interaction) => {
 
     return interaction.reply({
       content: `✅ Started posting for ${targetUser.username}, every ${result.cooldownMinutes} minutes.`,
+      ephemeral: true,
+    });
+  }
+  // ---------- /snipe ----------
+  if (interaction.commandName === 'snipe') {
+    const user = store.getUser(discordId);
+    if (!user) {
+      return interaction.reply({
+        content: '❌ You need to log in first. Run **/startlogin** to begin.',
+        ephemeral: true,
+      });
+    }
+
+    const itemId = interaction.options.getString('item');
+    if (!itemId) {
+      return interaction.reply({ content: '❌ Please pick an item from the suggestions.', ephemeral: true });
+    }
+
+    const inventory = await rolimonsApi.getPlayerInventory(user.robloxUsername);
+    const item = inventory.find(i => String(i.id) === String(itemId));
+    if (!item) {
+      return interaction.reply({ content: '❌ Item not found in your inventory.', ephemeral: true });
+    }
+
+    // Find the "ad viewer" category in the guild
+    const category = interaction.guild.channels.cache.find(
+      c => c.type === 4 && c.name.toLowerCase() === SNIPE_CATEGORY_NAME.toLowerCase()
+    );
+    if (!category) {
+      return interaction.reply({
+        content: `❌ Could not find a category named "${SNIPE_CATEGORY_NAME}". Please create it first.`,
+        ephemeral: true,
+      });
+    }
+
+    // Channel name: snipe-username-itemacronym (Discord channel names are lowercase, no spaces)
+    const safeUsername = user.robloxUsername.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const safeItem = (item.acronym || item.name).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const channelName = `snipe-${safeUsername}-${safeItem}`;
+
+    // Reuse existing channel if it exists, otherwise create it
+    let snipeChannel = interaction.guild.channels.cache.find(
+      c => c.name === channelName && c.parentId === category.id
+    );
+    if (!snipeChannel) {
+      snipeChannel = await interaction.guild.channels.create({
+        name: channelName,
+        parent: category.id,
+        topic: `Snipe alerts for ${user.robloxUsername} — ${item.name}`,
+      });
+    }
+
+    // Get snipe ping options from saved user data
+    const snipeOpts = user.snipeOptions || { mode: 'all', threshold: 10 };
+
+    await interaction.reply({
+      content: `✅ Sniping **${item.name}** in ${snipeChannel}! You'll be pinged when someone posts an ad requesting it${snipeOpts.mode !== 'all' ? ` (mode: ${snipeOpts.mode})` : ''}.`,
+      ephemeral: true,
+    });
+
+    const result = await snipeEngine.startSnipe({
+      itemId: item.id,
+      itemName: item.name,
+      acronym: item.acronym || '—',
+      pingMode: snipeOpts.mode,
+      pingThreshold: snipeOpts.threshold,
+      channel: snipeChannel,
+      discordId,
+    });
+
+    if (!result.ok) {
+      await interaction.followUp({
+        content: result.reason === 'already_sniping'
+          ? `⚠️ You're already sniping **${item.name}**. Use **/stopsnipe** first to restart it.`
+          : `❌ Failed to start snipe: ${result.reason}`,
+        ephemeral: true,
+      });
+    }
+    return;
+  }
+
+  // ---------- /stopsnipe ----------
+  if (interaction.commandName === 'stopsnipe') {
+    const itemId = interaction.options.getString('item');
+
+    if (!itemId) {
+      // Stop all snipes for this user
+      snipeEngine.stopAllSnipesForUser(discordId);
+      return interaction.reply({ content: '✅ Stopped all your active snipes.', ephemeral: true });
+    }
+
+    const stopped = snipeEngine.stopSnipe(discordId, itemId);
+    return interaction.reply({
+      content: stopped ? '✅ Stopped that snipe.' : '❌ No active snipe found for that item.',
+      ephemeral: true,
+    });
+  }
+
+  // ---------- /snipeoptions ----------
+  if (interaction.commandName === 'snipeoptions') {
+    const mode = interaction.options.getString('mode');
+    const threshold = interaction.options.getInteger('threshold') || 10;
+
+    if (mode === 'threshold' && !interaction.options.getInteger('threshold')) {
+      return interaction.reply({
+        content: '❌ Please also set the `threshold` option (e.g. `10` for 10%+ overpay).',
+        ephemeral: true,
+      });
+    }
+
+    store.setUser(discordId, { snipeOptions: { mode, threshold } });
+
+    const descriptions = {
+      all: 'You\'ll be pinged for every matching trade ad.',
+      overpay: 'You\'ll only be pinged when the offer is worth more than your item.',
+      threshold: `You\'ll only be pinged when the offer is ${threshold}%+ overpay.`,
+    };
+
+    return interaction.reply({
+      content: `✅ Snipe mode set to **${mode}**. ${descriptions[mode]}`,
       ephemeral: true,
     });
   }
