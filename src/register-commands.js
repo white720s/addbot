@@ -92,6 +92,41 @@ const commands = [
       opt.setName('user')
         .setDescription('The user whose posting you want to start')
         .setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('snipe')
+    .setDescription('Start sniping trade ads requesting an item you own')
+    .addStringOption(opt =>
+      opt.setName('item')
+        .setDescription('The item from your inventory to snipe for')
+        .setRequired(true)
+        .setAutocomplete(true)),
+
+  new SlashCommandBuilder()
+    .setName('stopsnipe')
+    .setDescription('Stop sniping for an item')
+    .addStringOption(opt =>
+      opt.setName('item')
+        .setDescription('Which snipe to stop (leave blank to stop all)')
+        .setRequired(false)
+        .setAutocomplete(true)),
+
+  new SlashCommandBuilder()
+    .setName('snipeoptions')
+    .setDescription('Set when the bot pings you for snipe matches')
+    .addStringOption(opt =>
+      opt.setName('mode')
+        .setDescription('When to ping you')
+        .setRequired(true)
+        .addChoices(
+          { name: 'All matches (ping on every matching ad)', value: 'all' },
+          { name: 'Overpay only (offer value > your item value)', value: 'overpay' },
+          { name: 'Threshold (set a minimum overpay %)', value: 'threshold' },
+        ))
+    .addIntegerOption(opt =>
+      opt.setName('threshold')
+        .setDescription('Minimum overpay % to ping (only for Threshold mode, e.g. 10 = 10%+)')
+        .setRequired(false)),
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST().setToken(process.env.DISCORD_BOT_TOKEN);
